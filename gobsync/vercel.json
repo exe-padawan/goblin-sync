@@ -1,0 +1,9 @@
+{
+  "version": 2,
+  "framework": "nextjs",
+  "buildCommand": "npm run build",
+  "outputDirectory": ".next",
+  "env": {
+    "OPENROUTER_BASE_URL": "https://openrouter.ai/api/v1"
+  }
+}
