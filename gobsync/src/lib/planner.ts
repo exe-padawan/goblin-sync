@@ -26,20 +26,39 @@ export const planRequestSchema = z.object({
     .transform((s) => (s ? format(startOfDay(parseISO(s)), "yyyy-MM-dd") : undefined)),
 });
 
-async function tryPlanWithOpenAI(task: string, days: number, start: Date): Promise<Microtask[] | null> {
-  const apiKey = process.env.OPENAI_API_KEY;
-  if (!apiKey) return null;
+function buildClient(): { client: OpenAI | null; model: string | null } {
+  // Prefer OpenRouter if available, else use OpenAI
+  const openRouterKey = process.env.OPENROUTER_API_KEY;
+  if (openRouterKey) {
+    const model = process.env.OPENROUTER_MODEL || "openai/gpt-4o-mini";
+    const client = new OpenAI({
+      apiKey: openRouterKey,
+      baseURL: process.env.OPENROUTER_BASE_URL || "https://openrouter.ai/api/v1",
+    });
+    return { client, model };
+  }
 
-  const client = new OpenAI({ apiKey });
+  const openAiKey = process.env.OPENAI_API_KEY;
+  if (openAiKey) {
+    const model = process.env.OPENAI_MODEL || "gpt-4o-mini";
+    const client = new OpenAI({ apiKey: openAiKey, baseURL: process.env.OPENAI_BASE_URL });
+    return { client, model };
+  }
 
-  // We ask for strict JSON; we will validate with Zod and fall back on failure
+  return { client: null, model: null };
+}
+
+async function tryPlanWithAI(task: string, days: number, start: Date): Promise<Microtask[] | null> {
+  const { client, model } = buildClient();
+  if (!client || !model) return null;
+
   const system =
     "You are an expert planning assistant. Break a user task into SMALL, atomic microtasks that can be done in about 20-40 minutes each, one per day. Return strict JSON only.";
   const user = `Task: ${task}\nDays: ${days}\nStart date (yyyy-MM-dd): ${format(start, "yyyy-MM-dd")}\n\nReturn JSON with an array 'microtasks' of length Days. Each item: { title, detail }. Titles must be imperative and specific.`;
 
   try {
     const completion = await client.chat.completions.create({
-      model: "gpt-4o-mini",
+      model,
       messages: [
         { role: "system", content: system },
         { role: "user", content: user },
@@ -87,9 +106,7 @@ function chunkDays(totalDays: number, weights: number[]): number[] {
   const raw = weights.map((w) => (w / totalWeight) * totalDays);
   const floored = raw.map((n) => Math.max(1, Math.floor(n)));
   let sum = floored.reduce((a, b) => a + b, 0);
-  // Adjust to match exactly totalDays
   while (sum < totalDays) {
-    // increment the largest remainder slot
     let maxIdx = 0;
     let maxRem = -Infinity;
     for (let i = 0; i < raw.length; i++) {
@@ -103,7 +120,6 @@ function chunkDays(totalDays: number, weights: number[]): number[] {
     sum += 1;
   }
   while (sum > totalDays) {
-    // decrement the smallest remainder slot but keep >=1
     let minIdx = 0;
     let minRem = Infinity;
     for (let i = 0; i < raw.length; i++) {
@@ -127,7 +143,6 @@ function titleCase(text: string): string {
 }
 
 function generateFallbackMicrotasks(task: string, days: number, start: Date): Microtask[] {
-  // Simple phase-based plan: Discover, Plan, Execute, Review, Iterate
   const phases = [
     { name: "Discover", weight: 1 },
     { name: "Plan", weight: 1 },
@@ -171,7 +186,6 @@ function generateFallbackMicrotasks(task: string, days: number, start: Date): Mi
     }
   }
 
-  // Ensure exact days by trimming or padding execute tasks
   if (microtasks.length > days) {
     return microtasks.slice(0, days);
   }
@@ -192,8 +206,7 @@ export async function planMicrotasks(input: z.infer<typeof planRequestSchema>): 
   const parsed = planRequestSchema.parse(input);
   const start = parsed.startDate ? startOfDay(parseISO(parsed.startDate)) : startOfDay(new Date());
 
-  // Try OpenAI first, then fallback
-  const ai = await tryPlanWithOpenAI(parsed.task, parsed.days, start);
+  const ai = await tryPlanWithAI(parsed.task, parsed.days, start);
   const microtasks = ai ?? generateFallbackMicrotasks(parsed.task, parsed.days, start);
 
   return {

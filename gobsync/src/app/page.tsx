@@ -131,7 +131,7 @@ export default function Home() {
         )}
 
         <footer className="py-8 text-center text-xs text-slate-500">
-          Built with Next.js + Tailwind. Set OPENAI_API_KEY to enable AI planning.
+          Built with Next.js + Tailwind. Set OPENROUTER_API_KEY to enable AI planning via OpenRouter.
         </footer>
       </div>
     </div>
